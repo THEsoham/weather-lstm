@@ -1,0 +1,14 @@
+# Model outputs — regenerate by running train.py
+checkpoints/
+
+# Python virtual environment
+venv/
+
+# Python bytecode
+__pycache__/
+*.pyc
+*.pyo
+
+# OS files
+.DS_Store
+Thumbs.db

@@ -1,0 +1,291 @@
+<!-- app/templates/index.html -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>India Weather Forecast</title>
+    
+    <!-- Chart.js for plotting predicted vs actual -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        
+        body {
+            font-family: 'Segoe UI', sans-serif;
+            background: #0f172a;
+            color: #e2e8f0;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 2rem;
+        }
+        
+        h1 {
+            font-size: 2rem;
+            margin-bottom: 0.5rem;
+            color: #38bdf8;
+        }
+        
+        .subtitle {
+            color: #94a3b8;
+            margin-bottom: 2rem;
+            font-size: 0.95rem;
+        }
+        
+        .card {
+            background: #1e293b;
+            border-radius: 12px;
+            padding: 2rem;
+            width: 100%;
+            max-width: 800px;
+            margin-bottom: 2rem;
+            box-shadow: 0 4px 24px rgba(0,0,0,0.3);
+        }
+        
+        .controls {
+            display: flex;
+            gap: 1rem;
+            flex-wrap: wrap;
+            align-items: flex-end;
+        }
+        
+        .control-group {
+            display: flex;
+            flex-direction: column;
+            gap: 0.4rem;
+            flex: 1;
+            min-width: 180px;
+        }
+        
+        label {
+            font-size: 0.85rem;
+            color: #94a3b8;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+        
+        select, input[type="date"] {
+            padding: 0.6rem 0.9rem;
+            border-radius: 8px;
+            border: 1px solid #334155;
+            background: #0f172a;
+            color: #e2e8f0;
+            font-size: 1rem;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+        
+        select:focus, input[type="date"]:focus {
+            border-color: #38bdf8;
+        }
+        
+        button {
+            padding: 0.65rem 1.8rem;
+            background: #38bdf8;
+            color: #0f172a;
+            border: none;
+            border-radius: 8px;
+            font-size: 1rem;
+            font-weight: 700;
+            cursor: pointer;
+            transition: background 0.2s;
+            align-self: flex-end;
+        }
+        
+        button:hover { background: #7dd3fc; }
+        button:disabled { background: #334155; color: #64748b; cursor: not-allowed; }
+        
+        .error {
+            color: #f87171;
+            margin-top: 1rem;
+            font-size: 0.9rem;
+            display: none;
+        }
+        
+        .chart-card { display: none; }
+        
+        .chart-title {
+            font-size: 1.1rem;
+            font-weight: 600;
+            margin-bottom: 1.5rem;
+            color: #38bdf8;
+        }
+        
+        canvas { width: 100% !important; }
+    </style>
+</head>
+
+<body>
+    <h1>🌦 India Weather Forecast</h1>
+    <p class="subtitle">LSTM — Predicted vs Actual Temperature (Next 7 Days)</p>
+
+    <!-- Input card -->
+    <div class="card">
+        <div class="controls">
+            
+            <div class="control-group">
+                <label for="city">City</label>
+                <select id="city">
+                    <!-- Jinja2 populates this from Flask's cities list -->
+                    {% for city in cities %}
+                        <option value="{{ city }}">{{ city }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            
+            <div class="control-group">
+                <label for="date">Start Date</label>
+                <!-- min/max constrain user to valid dataset range -->
+                <input type="date" id="date"
+                       min="2000-02-01"
+                       max="2024-12-24"
+                       value="2024-06-01">
+            </div>
+            
+            <button id="btn" onclick="runPrediction()">Predict</button>
+        </div>
+        
+        <p class="error" id="error-msg"></p>
+    </div>
+
+    <!-- Chart card — hidden until prediction runs -->
+    <div class="card chart-card" id="chart-card">
+        <p class="chart-title" id="chart-title"></p>
+        <canvas id="myChart"></canvas>
+    </div>
+
+    <script>
+        let chartInstance = null;  // keep reference so we can destroy before redrawing
+
+        async function runPrediction() {
+            const city = document.getElementById('city').value;
+            const date = document.getElementById('date').value;
+            const btn  = document.getElementById('btn');
+            const errEl = document.getElementById('error-msg');
+
+            // Reset UI state
+            errEl.style.display = 'none';
+            btn.disabled = true;
+            btn.textContent = 'Predicting...';
+
+            try {
+                // POST to Flask /predict endpoint
+                const response = await fetch('/predict', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ city, date })
+                });
+
+                const data = await response.json();
+
+                if (data.error) {
+                    throw new Error(data.error);
+                }
+
+                renderChart(data);
+
+            } catch (err) {
+                errEl.textContent = err.message;
+                errEl.style.display = 'block';
+            
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'Predict';
+            }
+        }
+
+        function renderChart(data) {
+            // Show the chart card
+            const card = document.getElementById('chart-card');
+            card.style.display = 'block';
+
+            // Update title
+            document.getElementById('chart-title').textContent =
+                `${data.city} — 7-Day Temperature Forecast`;
+
+            // Destroy previous chart if exists — Chart.js requires this
+            if (chartInstance) chartInstance.destroy();
+
+            const ctx = document.getElementById('myChart').getContext('2d');
+
+            chartInstance = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: data.dates,  // 7 date strings on x-axis
+                    datasets: [
+                        {
+                            label: 'Predicted Tmax',
+                            data: data.predicted.tmax,
+                            borderColor: '#f97316',
+                            backgroundColor: 'rgba(249,115,22,0.1)',
+                            borderWidth: 2,
+                            borderDash: [6, 3],  // dashed = predicted
+                            pointRadius: 4,
+                            tension: 0.3
+                        },
+                        {
+                            label: 'Actual Tmax',
+                            data: data.actual.tmax,
+                            borderColor: '#f97316',
+                            backgroundColor: 'rgba(249,115,22,0.05)',
+                            borderWidth: 2,
+                            pointRadius: 4,
+                            tension: 0.3
+                        },
+                        {
+                            label: 'Predicted Tmin',
+                            data: data.predicted.tmin,
+                            borderColor: '#38bdf8',
+                            backgroundColor: 'rgba(56,189,248,0.1)',
+                            borderWidth: 2,
+                            borderDash: [6, 3],  // dashed = predicted
+                            pointRadius: 4,
+                            tension: 0.3
+                        },
+                        {
+                            label: 'Actual Tmin',
+                            data: data.actual.tmin,
+                            borderColor: '#38bdf8',
+                            backgroundColor: 'rgba(56,189,248,0.05)',
+                            borderWidth: 2,
+                            pointRadius: 4,
+                            tension: 0.3
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    plugins: {
+                        legend: {
+                            labels: { color: '#e2e8f0' }
+                        },
+                        tooltip: {
+                            callbacks: {
+                                // Add °C unit to tooltip values
+                                label: ctx => `${ctx.dataset.label}: ${ctx.parsed.y.toFixed(1)}°C`
+                            }
+                        }
+                    },
+                    scales: {
+                        x: {
+                            ticks: { color: '#94a3b8' },
+                            grid:  { color: '#1e293b' }
+                        },
+                        y: {
+                            ticks: {
+                                color: '#94a3b8',
+                                callback: val => `${val}°C`
+                            },
+                            grid: { color: '#334155' }
+                        }
+                    }
+                }
+            });
+        }
+    </script>
+</body>
+</html>
